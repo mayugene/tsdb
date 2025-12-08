@@ -14,6 +14,7 @@ const (
 const (
 	RealTimeWindowDefaultStr      = "1m"
 	RealTimeWindowDefaultDuration = time.Minute
+	RealTimeWindowMinDuration     = time.Second
 	fillNone                      = "NONE"
 	fillNull                      = "NULL"
 )
