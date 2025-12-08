@@ -1,11 +1,14 @@
 package tsdb
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/gogf/gf/v2/container/garray"
+	"github.com/gogf/gf/v2/database/gredis"
 	"github.com/gogf/gf/v2/encoding/gjson"
+	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/gogf/gf/v2/util/gconv"
 )
@@ -14,7 +17,7 @@ func ParseStreamResult(input string) *RedisDataPoint {
 	/*
 		data format: ["1762828300498-0",["value","20"]]
 	*/
-	var decoded []interface{}
+	var decoded []any
 	var valuePart []string
 	jsonData, err := gjson.DecodeToJson(input)
 	if err != nil {
@@ -48,6 +51,7 @@ func ParseStreamResult(input string) *RedisDataPoint {
 func ApplyTimeWindowAndFill(
 	allDeviceData map[string]map[string][]*RedisDataPoint,
 	totalPointsCount int,
+	deviceModelName string,
 	start int64, // unix time, seconds
 	end int64, // unix time, seconds
 	interval string,
@@ -82,7 +86,7 @@ func ApplyTimeWindowAndFill(
 				searchIndexMap[deviceId] = make(map[string]int)
 			}
 			for pointCode, pointValues := range deviceData {
-				mapKey := fmt.Sprintf("%s_%s", deviceId, pointCode)
+				mapKey := fmt.Sprintf("%s:%s_%s", deviceModelName, deviceId, pointCode)
 				if _, ok := seriesDataMap[mapKey]; !ok {
 					seriesDataMap[mapKey] = garray.NewArray()
 				}
@@ -177,11 +181,32 @@ func removeItemByIndex(data *garray.Array, idxToRemove *garray.IntArray) *garray
 	if idxToRemove == nil || idxToRemove.Len() == 0 {
 		return data
 	}
-	data.IteratorDesc(func(k int, v interface{}) bool {
+	data.IteratorDesc(func(k int, v any) bool {
 		if idxToRemove.Contains(k) {
 			data.Remove(k)
 		}
 		return true
 	})
 	return data
+}
+
+func useRedisScan(ctx context.Context, scanOption gredis.ScanOption) ([]string, error) {
+	out := make([]string, 0)
+	var cursor uint64
+	var keys []string
+	var err error
+	for {
+		cursor, keys, err = g.Redis().Scan(ctx, cursor, scanOption)
+		if err != nil {
+			break
+		}
+		out = append(out, keys...)
+		if cursor == 0 {
+			break
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }

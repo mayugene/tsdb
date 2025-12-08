@@ -15,17 +15,18 @@ type Config struct {
 }
 
 type ReadDeviceLatestDataInput struct {
+	DeviceModelName string   `v:"required"`
+	PointCodes      []string `v:"required"`
+	ProjectId       string
 	DeviceIds       []string
-	DeviceModelName string
-	PointCodes      []string
 }
 type ReadDeviceSeriesDataInput struct {
-	DeviceIds       []string
-	DeviceModelName string
-	PointCodes      []string
-	StartTime       int64
-	EndTime         int64
-	Interval        string
+	DeviceIds       []string `v:"required"`
+	DeviceModelName string   `v:"required"`
+	PointCodes      []string `v:"required"`
+	StartTime       int64    `v:"required"`
+	EndTime         int64    `v:"required"`
+	Interval        string   `v:"required"`
 	FillOption      string
 }
 
@@ -36,7 +37,7 @@ type MetricTag struct {
 
 type MetricField struct {
 	Key   string
-	Value interface{}
+	Value any
 }
 
 type Metric struct {

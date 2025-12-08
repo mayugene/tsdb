@@ -15,6 +15,9 @@ import (
 )
 
 /*
+	!!! redis here is not for multiple projects !!!
+	!!! when apis don't pass deviceIds, redis will return untrusted results !!!
+
 	create 1 hash set for the latest data of device points, with TTL
 	create 1 stream for time series data of devices
 	we need to remove the outdated data manually using cron
@@ -88,7 +91,7 @@ func (s *redis) Write(ctx context.Context, metrics []Metric) error {
 			continue
 		}
 
-		latestDataKey := fmt.Sprintf("%s_%s", deviceId, redisKeyLatest)
+		latestDataKey := fmt.Sprintf("%s:%s_%s", metric.Name, deviceId, redisKeyLatest)
 		// millisecond
 		timestamp := metric.Time.UnixMilli()
 
@@ -115,10 +118,21 @@ func (s *redis) ReadToMap(
 	in ReadDeviceLatestDataInput,
 	dataFilterMap map[string]float64,
 ) (pointCodeValueMaps []map[string]any, pointCodes [][]string, err error) {
+	/*
+		caution: projectId will not be used here
+	*/
 	pointCodeValueMaps = make([]map[string]any, 0)
 	pointCodes = make([][]string, 0)
-	for _, deviceId := range in.DeviceIds {
-		latestDataKey := fmt.Sprintf("%s_%s", deviceId, redisKeyLatest)
+	targetDeviceIds := in.DeviceIds
+	if len(in.DeviceIds) == 0 {
+		keys, innErr := useRedisScan(ctx, gredis.ScanOption{Match: fmt.Sprintf("%s:*", in.DeviceModelName)})
+		if innErr != nil {
+			return nil, nil, innErr
+		}
+		targetDeviceIds = keys
+	}
+	for _, deviceId := range targetDeviceIds {
+		latestDataKey := fmt.Sprintf("%s:%s_%s", in.DeviceModelName, deviceId, redisKeyLatest)
 		rawZSet, loopErr := g.Redis().HGetAll(ctx, latestDataKey)
 		if loopErr != nil {
 			return nil, nil, loopErr
@@ -163,7 +177,7 @@ func (s *redis) ReadToSeries(
 	in ReadDeviceSeriesDataInput,
 ) (seriesData [][]any, timestamps []int64, err error) {
 	allDeviceData, totalPointsCount := s.batchQueryDeviceData(ctx, in.DeviceIds, in.PointCodes, in.StartTime, in.EndTime)
-	return ApplyTimeWindowAndFill(allDeviceData, totalPointsCount, in.StartTime, in.EndTime, in.Interval, in.FillOption)
+	return ApplyTimeWindowAndFill(allDeviceData, totalPointsCount, in.DeviceModelName, in.StartTime, in.EndTime, in.Interval, in.FillOption)
 }
 
 func (s *redis) CreateSTable(ctx context.Context, stableName string, columns []TdengineColumn) error {
@@ -197,7 +211,7 @@ func (s *redis) batchQueryDeviceData(
 	return
 }
 
-func (s *redis) xAdd(ctx context.Context, key string, timestamp int64, value interface{}) error {
+func (s *redis) xAdd(ctx context.Context, key string, timestamp int64, value any) error {
 	_, err := g.Redis().Do(ctx, "XADD", key, fmt.Sprintf("%d-*", timestamp), "value", value)
 	return err
 }
@@ -216,22 +230,12 @@ func (s *redis) xTrim(ctx context.Context, key string, endTime int64) error {
 }
 
 func (s *redis) streamAutoExpire(ctx context.Context) {
-	var streamKeys []string
-	var cursor uint64
-	var keys []string
-	var err error
-	for {
-		cursor, keys, err = g.Redis().Scan(ctx, cursor, gredis.ScanOption{Type: "stream"})
-		if err != nil {
-			break
-		}
-		streamKeys = append(streamKeys, keys...)
-		if cursor == 0 {
-			break
-		}
+	keys, err := useRedisScan(ctx, gredis.ScanOption{Type: "stream"})
+	if err != nil {
+		return
 	}
 	endTime := gtime.Now().Add(-1 * s.dataKeep).UnixMilli()
-	for _, streamKey := range streamKeys {
+	for _, streamKey := range keys {
 		err = s.xTrim(ctx, streamKey, endTime)
 		if err != nil {
 			g.Log().Errorf(ctx, "xtrim error: %v", err)

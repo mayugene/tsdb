@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/gogf/gf/v2/container/garray"
@@ -155,26 +156,27 @@ func (s *tdengine) ReadToMap(
 	in ReadDeviceLatestDataInput,
 	dataFilterMap map[string]float64,
 ) (pointCodeValueMaps []map[string]any, pointCodes [][]string, err error) {
-	qs := fmt.Sprintf(
-		"SELECT %s FROM `%s` WHERE `%s` IN (%s) AND `%s`>NOW-%s PARTITION BY `%s`",
-		WrapColumnsWithBackQuote(
-			in.PointCodes,
-			"last",
-			true,
-			true,
-			false,
-		),
-		in.DeviceModelName,
-		tdengineColumnDevice,
-		WrapDevicesWithSingleQuote(in.DeviceIds),
-		tdengineColumnTimestamp,
-		s.realTimeWindow,
-		tdengineColumnDevice,
-	)
-	serializedData, err := s.post(ctx, qs)
+	if in.ProjectId == "" && len(in.DeviceIds) == 0 {
+		return nil, nil, errors.New("projectId and deviceIds cannot be empty at the same time")
+	}
+	var queryString strings.Builder
+	queryString.WriteString("SELECT ")
+	queryString.WriteString(WrapColumnsWithBackQuote(in.PointCodes, "last", true, true, false))
+	queryString.WriteString(fmt.Sprintf(" FROM `%s` WHERE ", in.DeviceModelName))
+	if in.ProjectId != "" {
+		queryString.WriteString(fmt.Sprintf("`%s`='%s' AND ", tdengineColumnProject, in.ProjectId))
+	}
+	if len(in.DeviceIds) > 0 {
+		queryString.WriteString(fmt.Sprintf("`%s` IN (%s) AND ", tdengineColumnDevice, WrapDevicesWithSingleQuote(in.DeviceIds)))
+	}
+	queryString.WriteString(fmt.Sprintf("`%s`>NOW-%s ", tdengineColumnTimestamp, s.realTimeWindow))
+	queryString.WriteString(fmt.Sprintf("PARTITION BY `%s`", tdengineColumnDevice))
+
+	serializedData, err := s.post(ctx, queryString.String())
 	if err != nil {
 		return nil, nil, err
 	}
+
 	pointCodeValueMaps = make([]map[string]any, 0)
 	pointCodes = make([][]string, 0)
 	// todo, filter data in memory because I cannot find a better SQL to do filter in tdengine
@@ -229,14 +231,15 @@ func (s *tdengine) ReadToSeries(
 		in.FillOption = fillNone
 	}
 	var deviceId string
-	if len(in.DeviceIds) <= 1 {
-		return nil, nil, fmt.Errorf("data series for multiple devices is not supportted now")
+	if len(in.DeviceIds) > 1 {
+		return nil, nil, fmt.Errorf("data series for multiple devices will be supportted in the future")
 	} else {
 		deviceId = in.DeviceIds[0]
 	}
-	// select `p1`,`p2` from xxx order by `ts`
-	qs := fmt.Sprintf(
-		"SELECT %s,%s FROM `%s` WHERE `%s`='%s' AND `%s` >= %d AND `%s`<= %d INTERVAL(%s) FILL(%s)",
+	// select `p1`,`p2` from xxx where `device`=`xxx` and `_ts`>xxx and `_ts`<xxx interval(xxx) fill(xxx)
+	var queryString strings.Builder
+	queryString.WriteString(fmt.Sprintf(
+		"SELECT %s,%s",
 		tdengineColumnPseudoWindowStart,
 		WrapColumnsWithBackQuote(
 			in.PointCodes,
@@ -244,25 +247,21 @@ func (s *tdengine) ReadToSeries(
 			false,
 			false,
 			false,
-		),
-		in.DeviceModelName,
-		tdengineTableTagsDevice,
-		deviceId,
-		tdengineColumnTimestamp,
-		in.StartTime,
-		tdengineColumnTimestamp,
-		in.EndTime,
-		in.Interval,
-		in.FillOption,
-	)
+		)))
+	queryString.WriteString(fmt.Sprintf(" FROM `%s` WHERE ", in.DeviceModelName))
+	queryString.WriteString(fmt.Sprintf("`%s`='%s' AND ", tdengineTableTagsDevice, deviceId))
+	queryString.WriteString(fmt.Sprintf("`%s`>=%d AND ", tdengineColumnTimestamp, in.StartTime))
+	queryString.WriteString(fmt.Sprintf("`%s`<=%d ", tdengineColumnTimestamp, in.EndTime))
+	queryString.WriteString(fmt.Sprintf("INTERVAL(%s) FILL(%s)", in.Interval, in.FillOption))
 
-	serializedData, err := s.post(ctx, qs)
+	serializedData, err := s.post(ctx, queryString.String())
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(serializedData.Data) == 0 {
 		return
 	}
+
 	tsIndex := 0 // ts must be the first column
 	tsColumns := garray.NewStrArrayFrom([]string{tdengineColumnTimestamp, tdengineColumnPseudoWindowStart})
 	//var series []*garray.Array
