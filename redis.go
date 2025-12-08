@@ -29,14 +29,6 @@ type redis struct {
 	sync.Mutex
 }
 
-func (s *redis) IsHealthy(ctx context.Context) bool {
-	res, err := g.Redis().Do(ctx, "PING")
-	if err != nil {
-		return false
-	}
-	return !res.IsEmpty()
-}
-
 func NewRedisClient() Client {
 	return &redis{}
 }
@@ -68,6 +60,14 @@ func (s *redis) Init(ctx context.Context, config Config) (err error) {
 		s.streamAutoExpire(ctx)
 	}, redisAutoExpireCronName)
 	return
+}
+
+func (s *redis) IsHealthy(ctx context.Context) bool {
+	res, err := g.Redis().Do(ctx, "PING")
+	if err != nil {
+		return false
+	}
+	return !res.IsEmpty()
 }
 
 func (s *redis) Write(ctx context.Context, metrics []Metric) error {
@@ -164,6 +164,10 @@ func (s *redis) ReadToSeries(
 ) (seriesData [][]any, timestamps []int64, err error) {
 	allDeviceData, totalPointsCount := s.batchQueryDeviceData(ctx, in.DeviceIds, in.PointCodes, in.StartTime, in.EndTime)
 	return ApplyTimeWindowAndFill(allDeviceData, totalPointsCount, in.StartTime, in.EndTime, in.Interval, in.FillOption)
+}
+
+func (s *redis) CreateSTable(ctx context.Context, stableName string, columns []TdengineColumn) error {
+	panic("this is only for tdengine, redis does not have stables")
 }
 
 func (s *redis) batchQueryDeviceData(

@@ -23,6 +23,7 @@ type Client interface {
 		dataFilterMap map[string]float64,
 	) (pointCodeValueMaps []map[string]any, pointCodes [][]string, err error)
 	ReadToSeries(ctx context.Context, in ReadDeviceSeriesDataInput) (seriesData [][]any, timestamps []int64, err error)
+	CreateSTable(ctx context.Context, stableName string, columns []TdengineColumn) error
 }
 
 type ClientCreator func() Client

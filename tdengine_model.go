@@ -6,3 +6,8 @@ type TdengineHttpOutput struct {
 	Data       [][]any  `json:"data"`
 	Rows       int      `json:"rows"`
 }
+
+type TdengineColumn struct {
+	ColumnName string
+	DataType   string
+}

@@ -83,3 +83,38 @@ func WrapDevicesWithSingleQuote(device []string) (out string) {
 	}
 	return strings.TrimRight(strBuilder.String(), ", ")
 }
+
+func WrapPointsWithDataType(in []TdengineColumn) (out string) {
+	/*
+		if we use schemaless line protocol to write data and data types are not wrapped
+		tdengine will consider it as double by default
+		but for "t, T, true, True, TRUE, f, F, false, False", they will be recognized as bool
+		although telegraf can handle suffixes in line protocol, but fields must be previously written in its config file
+		it is not suitable for dynamic fields
+		so here, we map all int/bit type to double, or tdengine will report an err: [0x3002] Invalid data format
+	*/
+	dataTypeMap := map[string]string{
+		"1":  tdengineDefaultDataType, // INT8
+		"2":  tdengineDefaultDataType, // UINT8
+		"3":  tdengineDefaultDataType, // INT16
+		"4":  tdengineDefaultDataType, // UINT16
+		"5":  tdengineDefaultDataType, // INT32
+		"6":  tdengineDefaultDataType, // UINT32
+		"7":  tdengineDefaultDataType, // INT64
+		"8":  tdengineDefaultDataType, // UINT64
+		"9":  tdengineDefaultDataType, // FLOAT
+		"10": tdengineDefaultDataType, // DOUBLE
+		"11": tdengineDefaultDataType, // BIT
+		"12": "BOOL",                  // BOOL
+		"13": "NCHAR(32)",             // STRING
+	}
+	var strBuilder strings.Builder
+	for _, v := range in {
+		dataType, ok := dataTypeMap[v.DataType]
+		if !ok {
+			dataType = tdengineDefaultDataType
+		}
+		strBuilder.WriteString(fmt.Sprintf("`%s` %s, ", v.ColumnName, dataType))
+	}
+	return strings.TrimRight(strBuilder.String(), ", ")
+}

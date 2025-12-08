@@ -36,6 +36,7 @@ const (
 	tdengineDataKeepMinimumStr      = "1d"
 	tdengineDataKeepMinimumDuration = time.Hour * 24
 	tdengineDefaultPassword         = "taosdata"
+	tdengineDefaultDataType         = "DOUBLE"
 )
 const (
 	redisKeyLatest               = "latest"

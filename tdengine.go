@@ -28,18 +28,6 @@ type tdengine struct {
 	sync.Mutex
 }
 
-func (s *tdengine) IsHealthy(ctx context.Context) bool {
-	qs := "SELECT SERVER_STATUS()"
-	serializedData, err := s.httpRead(ctx, qs)
-	if err != nil || serializedData == nil {
-		return false
-	}
-	if serializedData.Rows == 1 && len(serializedData.Data) == 1 && len(serializedData.Data[0]) == 1 && gconv.Int(serializedData.Data[0][0]) == 1 {
-		return true
-	}
-	return false
-}
-
 func NewTdengineClient() Client {
 	return &tdengine{
 		client: gclient.New(), // gclient.Client should always be reused for better performance and it is GC friendly
@@ -134,6 +122,18 @@ func (s *tdengine) Init(ctx context.Context, config Config) (err error) {
 	return
 }
 
+func (s *tdengine) IsHealthy(ctx context.Context) bool {
+	qs := "SELECT SERVER_STATUS()"
+	serializedData, err := s.post(ctx, qs)
+	if err != nil || serializedData == nil {
+		return false
+	}
+	if serializedData.Rows == 1 && len(serializedData.Data) == 1 && len(serializedData.Data[0]) == 1 && gconv.Int(serializedData.Data[0][0]) == 1 {
+		return true
+	}
+	return false
+}
+
 func (s *tdengine) Write(ctx context.Context, metrics []Metric) (err error) {
 	buffer := Serialize(metrics)
 	if buffer.Len() == 0 {
@@ -171,7 +171,7 @@ func (s *tdengine) ReadToMap(
 		s.realTimeWindow,
 		tdengineColumnDevice,
 	)
-	serializedData, err := s.httpRead(ctx, qs)
+	serializedData, err := s.post(ctx, qs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -256,7 +256,7 @@ func (s *tdengine) ReadToSeries(
 		in.FillOption,
 	)
 
-	serializedData, err := s.httpRead(ctx, qs)
+	serializedData, err := s.post(ctx, qs)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -286,7 +286,29 @@ func (s *tdengine) ReadToSeries(
 	return
 }
 
-func (s *tdengine) httpRead(ctx context.Context, qs string) (*TdengineHttpOutput, error) {
+func (s *tdengine) CreateSTable(ctx context.Context, stableName string, columns []TdengineColumn) (err error) {
+	tags := fmt.Sprintf(
+		"`%s` %s, `%s` %s",
+		tdengineTableTagsDevice,
+		tdengineTableTagsType,
+		tdengineTableTagsProject,
+		tdengineTableTagsType,
+	)
+	qs := fmt.Sprintf(
+		"CREATE STABLE `%s` (`%s` TIMESTAMP, %s) TAGS (%s)",
+		stableName,
+		tdengineColumnTimestamp,
+		WrapPointsWithDataType(columns),
+		tags,
+	)
+	_, err = s.post(ctx, qs)
+	if err != nil {
+		return err
+	}
+	return
+}
+
+func (s *tdengine) post(ctx context.Context, qs string) (*TdengineHttpOutput, error) {
 	tdHttpRes, err := s.client.Post(ctx, s.uri, qs)
 	defer tdHttpRes.Close() // res need to be closed to prevent oom
 	if err != nil {
