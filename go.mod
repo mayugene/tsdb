@@ -1,4 +1,4 @@
-module tsdb
+module github.com/mayugene/tsdb
 
 go 1.24
 
