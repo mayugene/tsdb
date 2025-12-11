@@ -19,7 +19,7 @@ func mustGetDataKeepFromConfig(config Config, clientType ClientType) (string, ti
 	}
 	if config.DataKeep != "" {
 		dataKeepDuration, innErr := gtime.ParseDuration(config.DataKeep) // support parsing days from "100d"
-		if innErr != nil || dataKeepDuration == 0 || int64(dataKeepDuration.Hours()) < int64(defaultDataKeepDuration) {
+		if innErr != nil || dataKeepDuration == 0 || int64(dataKeepDuration.Hours()) < int64(defaultDataKeepDuration.Hours()) {
 			return defaultDataKeepStr, defaultDataKeepDuration
 		} else {
 			// parse success, this string is valid
