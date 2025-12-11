@@ -15,10 +15,12 @@ type Config struct {
 }
 
 type ReadDeviceLatestDataInput struct {
-	DeviceModelName string   `v:"required"`
-	PointCodes      []string `v:"required"`
-	ProjectId       string
-	DeviceIds       []string
+	DeviceModelName             string   `v:"required"`
+	PointCodes                  []string `v:"required"`
+	ProjectId                   string
+	DeviceIds                   []string
+	HaveProjectIdInResult       bool
+	HaveDeviceModelNameInResult bool
 }
 type ReadDeviceSeriesDataInput struct {
 	DeviceIds       []string `v:"required"`

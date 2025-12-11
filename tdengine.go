@@ -156,12 +156,9 @@ func (s *tdengine) ReadToMap(
 	in ReadDeviceLatestDataInput,
 	dataFilterMap map[string]float64,
 ) (pointCodeValueMaps []map[string]any, pointCodes [][]string, err error) {
-	if in.ProjectId == "" && len(in.DeviceIds) == 0 {
-		return nil, nil, errors.New("projectId and deviceIds cannot be empty at the same time")
-	}
 	var queryString strings.Builder
 	queryString.WriteString("SELECT ")
-	queryString.WriteString(WrapColumnsWithBackQuote(in.PointCodes, "last", true, true, false))
+	queryString.WriteString(WrapColumnsWithBackQuote(in.PointCodes, "last", true, true, in.HaveProjectIdInResult))
 	queryString.WriteString(fmt.Sprintf(" FROM `%s` WHERE ", in.DeviceModelName))
 	if in.ProjectId != "" {
 		queryString.WriteString(fmt.Sprintf("`%s`='%s' AND ", tdengineColumnProject, in.ProjectId))
@@ -170,7 +167,7 @@ func (s *tdengine) ReadToMap(
 		queryString.WriteString(fmt.Sprintf("`%s` IN (%s) AND ", tdengineColumnDevice, WrapDevicesWithSingleQuote(in.DeviceIds)))
 	}
 	queryString.WriteString(fmt.Sprintf("`%s`>NOW-%s ", tdengineColumnTimestamp, s.realTimeWindow))
-	queryString.WriteString(fmt.Sprintf("PARTITION BY `%s`", tdengineColumnDevice))
+	queryString.WriteString(fmt.Sprintf("PARTITION BY `%s`, `%s`", tdengineColumnDevice, tdengineColumnProject))
 
 	serializedData, err := s.post(ctx, queryString.String())
 	if err != nil {
@@ -214,6 +211,9 @@ func (s *tdengine) ReadToMap(
 				m[currentColumn] = dv[i]
 				pointCodesInOneTimestamp = append(pointCodesInOneTimestamp, currentColumn)
 			}
+		}
+		if in.HaveDeviceModelNameInResult == true {
+			m[tdengineTableNameKey] = in.DeviceModelName
 		}
 		if isPassedFilter {
 			pointCodeValueMaps = append(pointCodeValueMaps, m)
