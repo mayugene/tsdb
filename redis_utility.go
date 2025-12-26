@@ -53,11 +53,11 @@ func ApplyTimeWindowAndFill(
 	totalPointsCount int,
 	deviceModelName string,
 	start int64, // unix time, seconds
-	end int64, // unix time, seconds
+	end int64,   // unix time, seconds
 	interval string,
 	fillType string,
 ) (seriesData [][]any, timestamps []int64, err error) {
-	// seriesData [][]any, timestamps []int64,
+	// seriesData [][]any, timestamps []int64
 	timestampsAny := garray.NewArray()
 	seriesData = make([][]any, 0)
 	seriesDataMap := make(map[string]*garray.Array)
