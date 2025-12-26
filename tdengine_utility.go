@@ -8,7 +8,7 @@ import (
 	"github.com/gogf/gf/v2/util/gconv"
 )
 
-func Serialize(metrics []Metric) *bytes.Buffer {
+func Serialize(metrics []*Metric) *bytes.Buffer {
 	/*
 		influxdb line protocol format:
 		measurement,tag_set field_set timestamp
@@ -19,6 +19,10 @@ func Serialize(metrics []Metric) *bytes.Buffer {
 			buffer.WriteByte('\n')
 		}
 		buffer.WriteString(metric.Name)
+		// tags and fields of a valid metric should not be empty
+		if metric.TagList == nil || len(metric.TagList) == 0 || metric.FieldList == nil || len(metric.FieldList) == 0 {
+			continue
+		}
 		// write tags
 		for _, tag := range metric.TagList {
 			buffer.WriteByte(',')

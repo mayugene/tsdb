@@ -135,7 +135,7 @@ func (s *tdengine) IsHealthy(ctx context.Context) bool {
 	return false
 }
 
-func (s *tdengine) Write(ctx context.Context, metrics []Metric) (err error) {
+func (s *tdengine) Write(ctx context.Context, metrics []*Metric) (err error) {
 	buffer := Serialize(metrics)
 	if buffer.Len() == 0 {
 		return

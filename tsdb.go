@@ -16,7 +16,7 @@ var (
 type Client interface {
 	Init(context.Context, Config) error
 	IsHealthy(context.Context) bool
-	Write(context.Context, []Metric) error
+	Write(context.Context, []*Metric) error
 	ReadToMap(
 		ctx context.Context,
 		in ReadDeviceLatestDataInput,

@@ -73,8 +73,12 @@ func (s *redis) IsHealthy(ctx context.Context) bool {
 	return !res.IsEmpty()
 }
 
-func (s *redis) Write(ctx context.Context, metrics []Metric) error {
+func (s *redis) Write(ctx context.Context, metrics []*Metric) error {
 	for _, metric := range metrics {
+		// tags and fields of a valid metric should not be empty
+		if metric.TagList == nil || len(metric.TagList) == 0 || metric.FieldList == nil || len(metric.FieldList) == 0 {
+			continue
+		}
 		// get deviceId from tag
 		var deviceId string
 		for _, tag := range metric.TagList {
@@ -86,11 +90,6 @@ func (s *redis) Write(ctx context.Context, metrics []Metric) error {
 			// deviceId is a must
 			continue
 		}
-		if len(metric.FieldList) == 0 {
-			// no points
-			continue
-		}
-
 		latestDataKey := fmt.Sprintf("%s:%s_%s", metric.Name, deviceId, redisKeyLatest)
 		// millisecond
 		timestamp := metric.Time.UnixMilli()
