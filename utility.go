@@ -21,13 +21,13 @@ func mustGetDataKeepFromConfig(config Config, clientType ClientType) (string, ti
 		dataKeepDuration, innErr := gtime.ParseDuration(config.DataKeep) // support parsing days from "100d"
 		if innErr != nil || dataKeepDuration == 0 || int64(dataKeepDuration.Hours()) < int64(defaultDataKeepDuration.Hours()) {
 			return defaultDataKeepStr, defaultDataKeepDuration
-		} else {
-			// parse success, this string is valid
-			return config.DataKeep, dataKeepDuration
 		}
-	} else {
-		return defaultDataKeepStr, defaultDataKeepDuration
+
+		// parse success, this string is valid
+		return config.DataKeep, dataKeepDuration
 	}
+
+	return defaultDataKeepStr, defaultDataKeepDuration
 }
 
 func mustGetRealTimeWindowFromConfig(config Config) (string, time.Duration) {
@@ -35,11 +35,11 @@ func mustGetRealTimeWindowFromConfig(config Config) (string, time.Duration) {
 		realTimeWindowDuration, innErr := gtime.ParseDuration(config.RealTimeWindow)
 		if innErr != nil || realTimeWindowDuration == 0 || int64(realTimeWindowDuration) < int64(RealTimeWindowMinDuration) {
 			return RealTimeWindowDefaultStr, RealTimeWindowDefaultDuration
-		} else {
-			// parse success, this string is valid
-			return config.RealTimeWindow, realTimeWindowDuration
 		}
-	} else {
-		return RealTimeWindowDefaultStr, RealTimeWindowDefaultDuration
+
+		// parse success, this string is valid
+		return config.RealTimeWindow, realTimeWindowDuration
 	}
+
+	return RealTimeWindowDefaultStr, RealTimeWindowDefaultDuration
 }
