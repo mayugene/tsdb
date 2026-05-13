@@ -3,6 +3,7 @@ package tsdb
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/gogf/gf/v2/container/garray"
@@ -52,12 +53,11 @@ func ApplyTimeWindowAndFill(
 	allDeviceData map[string]map[string][]*RedisDataPoint,
 	totalPointsCount int,
 	deviceModelName string,
-	start int64, // unix time, seconds
-	end int64,   // unix time, seconds
+	start int64, // Unix time, seconds
+	end int64,   // Unix time, seconds
 	interval string,
-	fillType string,
+	fillOption string,
 ) (seriesData [][]any, timestamps []int64, err error) {
-	// seriesData [][]any, timestamps []int64
 	timestampsAny := garray.NewArray()
 	seriesData = make([][]any, 0)
 	seriesDataMap := make(map[string]*garray.Array)
@@ -65,6 +65,9 @@ func ApplyTimeWindowAndFill(
 	searchIndexMap := make(map[string]map[string]int)
 	// used for fill NONE
 	noValueCountsArray := garray.NewIntArray()
+
+	// for fillOption=LINEAR
+	lastKnownIndexMap := make(map[string]int) // mapKey -> index in pointValues
 
 	duration, err := gtime.ParseDuration(interval)
 	if err != nil {
@@ -74,6 +77,28 @@ func ApplyTimeWindowAndFill(
 	startTime := gtime.NewFromTimeStamp(start)
 	endTime := gtime.NewFromTimeStamp(end)
 	currentWindowStart := startTime
+
+	for deviceId, deviceData := range allDeviceData {
+		if searchIndexMap[deviceId] == nil {
+			searchIndexMap[deviceId] = make(map[string]int)
+		}
+		for pointCode, pointValues := range deviceData {
+			mapKey := fmt.Sprintf("%s:%s_%s", deviceModelName, deviceId, pointCode)
+			// 找到 start 之前的最后一个点的索引
+			lastIdx := -1
+			for i, pt := range pointValues {
+				if pt.Timestamp.Before(startTime) {
+					lastIdx = i
+				} else {
+					break
+				}
+			}
+			lastKnownIndexMap[mapKey] = lastIdx
+			// 搜索从该点之后开始
+			searchIndexMap[deviceId][pointCode] = lastIdx + 1
+		}
+	}
+
 	for currentWindowStart.Before(endTime) || currentWindowStart.Equal(endTime) {
 		currentWindowEnd := currentWindowStart.Add(duration)
 
@@ -95,15 +120,57 @@ func ApplyTimeWindowAndFill(
 				windowValue, newIdx := findValueWithIndex(pointValues, currentIdx, currentWindowStart, currentWindowEnd)
 				// By default, fill null if not find a proper value
 				// to fill none, fill null first and then delete the all null time
-				switch fillType {
+				switch fillOption {
 				case fillNull:
 					// we cannot directly use seriesDataMap[mapKey].Append(windowValue)
-					// since windowValue is nil(*int64) which is different from nil during json marshal
+					// since windowValue is nil(*int64) which is different from nil during JSON marshal
 					if windowValue == nil {
 						seriesDataMap[mapKey].Append(nil)
 					} else {
 						seriesDataMap[mapKey].Append(windowValue)
 					}
+
+				case fillLinear:
+					// get last known index, if not exist, it will be -1
+					lastIdx, hasLast := lastKnownIndexMap[mapKey]
+					if !hasLast {
+						lastIdx = -1
+					}
+					if windowValue != nil {
+						// if there are data in this window, use it and update lastKnownIndex
+						lastKnownIndexMap[mapKey] = newIdx - 1
+					} else {
+						// no data, execute linear fill
+						var prevPoint, nextPoint *RedisDataPoint
+						if lastIdx >= 0 && lastIdx < len(pointValues) {
+							prevPoint = pointValues[lastIdx]
+						}
+						if newIdx < len(pointValues) {
+							nextPoint = pointValues[newIdx]
+						}
+
+						if prevPoint != nil && nextPoint != nil {
+							targetMs := currentWindowEnd.UnixMilli()
+							prevMs := prevPoint.Timestamp.UnixMilli()
+							nextMs := nextPoint.Timestamp.UnixMilli()
+
+							if nextMs == prevMs {
+								windowValue = &prevPoint.Value
+							} else {
+								ratio := float64(targetMs-prevMs) / float64(nextMs-prevMs)
+								interP := float64(prevPoint.Value) + ratio*float64(nextPoint.Value-prevPoint.Value)
+								windowValue = new(int64(math.Round(interP)))
+							}
+						} else if prevPoint != nil {
+							// only previous exists, use prev to fill
+							windowValue = &prevPoint.Value
+						} else if nextPoint != nil {
+							// only next exists, use next to fill
+							windowValue = &nextPoint.Value
+						}
+					}
+					seriesDataMap[mapKey].Append(windowValue)
+
 				default:
 					seriesDataMap[mapKey].Append(windowValue)
 				}
@@ -125,13 +192,13 @@ func ApplyTimeWindowAndFill(
 	// find all timestamps that null count == totalPointsCount
 	allNullIndex := findAllNullIndex(noValueCountsArray, totalPointsCount)
 	// remove timestamps that all data are null
-	if fillType == fillNone {
+	if fillOption == fillNone {
 		removeItemByIndex(timestampsAny, allNullIndex)
 	}
 	// format series data
 	for _, mapItem := range seriesDataMap {
 		// remove timestamps that all data are null
-		if fillType == fillNone {
+		if fillOption == fillNone {
 			removeItemByIndex(mapItem, allNullIndex)
 		}
 		seriesData = append(seriesData, mapItem.Slice())
@@ -156,13 +223,12 @@ func findValueWithIndex(pointValues []*RedisDataPoint, startIdx int, start *gtim
 			return lastValue, i
 		}
 		// in window
-		value := pointValues[i].Value
-		lastValue = &value
+		lastValue = new(pointValues[i].Value)
 	}
 	// when looping the array, find nothing
 	// return the length of array
 	// and next time, it will still return nil(*int64) for lastValue
-	// caution: nil(*int64) is different from nil during json marshal
+	// caution: nil(*int64) is different from nil during JSON marshal
 	return lastValue, len(pointValues)
 }
 

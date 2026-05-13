@@ -17,6 +17,7 @@ const (
 	RealTimeWindowMinDuration     = time.Second
 	fillNone                      = "NONE"
 	fillNull                      = "NULL"
+	fillLinear                    = "LINEAR"
 )
 
 const (

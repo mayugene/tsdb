@@ -59,8 +59,7 @@ func (f *ClientFactory) CreateClient(clientType ClientType) (Client, error) {
 	})
 	if isCreated {
 		return instance, nil
-	} else {
-		supportedTypes := fmt.Sprintf("[ %s ], [ %s ]", ClientTypeTdengine, ClientTypeRedis)
-		return nil, fmt.Errorf("initial tsdb type [ %s ] is not in the support list: %s", instanceType, supportedTypes)
 	}
+	supportedTypes := fmt.Sprintf("[ %s ], [ %s ]", ClientTypeTdengine, ClientTypeRedis)
+	return nil, fmt.Errorf("initial tsdb type [ %s ] is not in the support list: %s", instanceType, supportedTypes)
 }

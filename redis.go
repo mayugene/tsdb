@@ -16,14 +16,14 @@ import (
 
 /*
 	!!! redis here is not for multiple projects !!!
-	!!! when apis don't pass deviceIds, redis will return untrusted results !!!
+	!!! when APIs don't pass deviceIds, redis will return untrusted results !!!
 
 	create 1 hash set for the latest data of device points, with TTL
 	create 1 stream for time series data of devices
 	we need to remove the outdated data manually using cron
 
-	zset is currently commented, since for the same member of zset, although with different scores,
-	zadd will update the score instead of insert a new record, that is not what we need
+	ZSET is currently commented, since for the same member of ZSET, although with different scores,
+	ZADD will update the score instead of insert a new record, that is not what we need
 */
 
 type redis struct {
@@ -101,7 +101,7 @@ func (s *redis) Write(ctx context.Context, metrics []*Metric) error {
 			seriesDataKey := fmt.Sprintf("%s:%s", deviceId, field.Key)
 			err := s.xAdd(ctx, seriesDataKey, timestamp, field.Value)
 			if err != nil {
-				g.Log().Errorf(ctx, "%s: %v", "xadd error", err)
+				g.Log().Errorf(ctx, "%s: %v", "XADD error", err)
 			}
 		}
 		// update latest data
@@ -176,7 +176,7 @@ func (s *redis) ReadToSeries(
 	in ReadDeviceSeriesDataInput,
 ) (seriesData [][]any, timestamps []int64, err error) {
 	allDeviceData, totalPointsCount := s.batchQueryDeviceData(ctx, in.DeviceIds, in.PointCodes, in.StartTime, in.EndTime)
-	return ApplyTimeWindowAndFill(allDeviceData, totalPointsCount, in.DeviceModelName, in.StartTime, in.EndTime, in.Interval, in.FillOption)
+	return ApplyTimeWindowAndFill(allDeviceData, totalPointsCount, in.DeviceModelName, in.StartTime, in.EndTime, in.Interval, getValidFillOption(in.FillOption))
 }
 
 func (s *redis) CreateSTable(ctx context.Context, stableName string, columns []TdengineColumn) error {

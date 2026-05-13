@@ -1,10 +1,12 @@
 package tsdb
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/gogf/gf/v2/container/garray"
 	"github.com/gogf/gf/v2/os/gtime"
+	"github.com/gogf/gf/v2/util/gconv"
 )
 
 func TestParseStreamResult(t *testing.T) {
@@ -301,6 +303,203 @@ func TestRemoveItemByIndex(t *testing.T) {
 	}
 }
 
+func TestApplyTimeWindowAndFill(t *testing.T) {
+	base := gtime.NewFromStr("2026-01-01T00:00:00Z").Unix()
+	model := "sensor"
+	dev1 := "dev1"
+	code := "temp"
+	var emptyInt64 *int64
+
+	tests := []struct {
+		name           string
+		deviceData     map[string]map[string][]*RedisDataPoint
+		totalPoints    int
+		start, end     int64 // second
+		interval       string
+		fillOption     string
+		wantTimestamps []int64 // milliseconds
+		wantSeries     [][]any
+		wantErr        bool
+	}{
+		{
+			name: "fillNull - single point in middle window",
+			deviceData: map[string]map[string][]*RedisDataPoint{
+				dev1: {code: {newRedisDataPoint(base+90, 100)}}, // placed in the 2nd window (window 0:0-60, window 1:60-120)
+			},
+			totalPoints: 1,
+			start:       base,
+			end:         base + 180, // 3 windows
+			interval:    "1m",
+			fillOption:  fillNull,
+			// expected timestamps: millisecond values of window end times 60,120,180
+			wantTimestamps: []int64{getUnixMilli(base + 60), getUnixMilli(base + 120), getUnixMilli(base + 180)},
+			wantSeries: [][]any{
+				{nil, gconv.Interfaces(new(int64(100)))[0], nil}, // values for three windows
+			},
+		},
+		{
+			name: "fillNone - single point removes all-null windows",
+			deviceData: map[string]map[string][]*RedisDataPoint{
+				dev1: {code: {newRedisDataPoint(base+90, 100)}},
+			},
+			totalPoints: 1,
+			start:       base,
+			end:         base + 180,
+			interval:    "1m",
+			fillOption:  fillNone,
+			// only window 1 (end time base+120) has value, other windows are removed
+			wantTimestamps: []int64{getUnixMilli(base + 120)},
+			wantSeries: [][]any{
+				{gconv.Interfaces(new(int64(100)))[0]},
+			},
+		},
+		{
+			name: "fillLinear - standard interpolation",
+			deviceData: map[string]map[string][]*RedisDataPoint{
+				dev1: {
+					code: {
+						newRedisDataPoint(base-10, 100), // previous point
+						newRedisDataPoint(base+90, 200), // next point
+					},
+				},
+			},
+			totalPoints: 1,
+			start:       base,
+			end:         base + 180, // three windows: [0,60) [60,120) [120,180)
+			interval:    "1m",
+			fillOption:  fillLinear,
+			// window 0: prev point base-10(100), next point base+90(200), window end base+60
+			// interpolation: ratio = (60 - (-10)) / (90 - (-10)) = 70/100=0.7, value=100+0.7*100=170
+			// window 1: contains real point 200, return 200 (last point in window)
+			// window 2: no next point, only prev point 200, extrapolate=200
+			wantTimestamps: []int64{
+				getUnixMilli(base + 60),
+				getUnixMilli(base + 120),
+				getUnixMilli(base + 180),
+			},
+			wantSeries: [][]any{
+				{
+					gconv.Interfaces(new(int64(170)))[0],
+					gconv.Interfaces(new(int64(200)))[0],
+					gconv.Interfaces(new(int64(200)))[0],
+				},
+			},
+		},
+		{
+			name: "fillLinear - extrapolation before (only next point)",
+			deviceData: map[string]map[string][]*RedisDataPoint{
+				dev1: {code: {newRedisDataPoint(base+70, 500)}},
+			},
+			totalPoints: 1,
+			start:       base,
+			end:         base + 120, // two windows: [0,60), [60,120)
+			interval:    "1m",
+			fillOption:  fillLinear,
+			wantTimestamps: []int64{
+				getUnixMilli(base + 60),  // window 0 end time
+				getUnixMilli(base + 120), // window 1 end time
+			},
+			wantSeries: [][]any{
+				{
+					gconv.Interfaces(new(int64(500)))[0], // window 0: extrapolated 500
+					gconv.Interfaces(new(int64(500)))[0], // window 1: original point 500
+				},
+			},
+		},
+		// below is the corrected 'extrapolation at start' test case
+		{
+			name: "fillLinear - extrapolation at start",
+			deviceData: map[string]map[string][]*RedisDataPoint{
+				dev1: {code: {newRedisDataPoint(base+70, 500)}}, // first point is in the 2nd window
+			},
+			totalPoints: 1,
+			start:       base,
+			end:         base + 180,
+			interval:    "1m",
+			fillOption:  fillLinear,
+			// window 0: [0,60) no prev point, next point base+70, extrapolate using next point value=500
+			// window 1: [60,120) contains real point 500, return directly 500
+			// window 2: [120,180) no next point, only prev point 500, extrapolate=500
+			wantTimestamps: []int64{
+				getUnixMilli(base + 60),
+				getUnixMilli(base + 120),
+				getUnixMilli(base + 180),
+			},
+			wantSeries: [][]any{
+				{
+					gconv.Interfaces(new(int64(500)))[0],
+					gconv.Interfaces(new(int64(500)))[0],
+					gconv.Interfaces(new(int64(500)))[0],
+				},
+			},
+		},
+		{
+			name: "fillLinear - no data at all",
+			deviceData: map[string]map[string][]*RedisDataPoint{
+				dev1: {code: {}}, // empty points
+			},
+			totalPoints:    1,
+			start:          base,
+			end:            base + 120,
+			interval:       "1m",
+			fillOption:     fillLinear,
+			wantTimestamps: []int64{getUnixMilli(base + 60), getUnixMilli(base + 120)},
+			wantSeries: [][]any{
+				{emptyInt64, emptyInt64},
+			},
+		},
+		{
+			name: "fillNone - multi-series removes only when all series null",
+			deviceData: map[string]map[string][]*RedisDataPoint{
+				dev1: {
+					"temp": {newRedisDataPoint(base+90, 100)}, // window 1 has value
+					"humi": {},                                // all empty
+				},
+			},
+			totalPoints: 2, // two series
+			start:       base,
+			end:         base + 180,
+			interval:    "1m",
+			fillOption:  fillNone,
+			// window 0: both series nil -> removed
+			// window 1: temp has value (100), humi nil -> not all null, kept
+			// window 2: both series nil -> removed
+			wantTimestamps: []int64{getUnixMilli(base + 120)},
+			wantSeries: [][]any{
+				{gconv.Interfaces(new(int64(100)))[0]}, // temp
+				{emptyInt64},                           // humi (kept but value nil)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			series, timestamps, err := ApplyTimeWindowAndFill(
+				tt.deviceData, tt.totalPoints, model, tt.start, tt.end, tt.interval, tt.fillOption,
+			)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("expected error, but got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			if !reflect.DeepEqual(tt.wantTimestamps, timestamps) {
+				t.Errorf("timestamps mismatch:\nwant: %v\ngot:  %v", tt.wantTimestamps, timestamps)
+			}
+
+			if !reflect.DeepEqual(tt.wantSeries, series) {
+				t.Errorf("series mismatch:\nwant: %v\ngot:  %v", tt.wantSeries, series)
+			}
+		})
+	}
+}
+
 func ptrStr(v *int64) string {
 	if v == nil {
 		return "nil"
@@ -316,4 +515,16 @@ func ptrInt64Equal(a, b *int64) bool {
 		return false
 	}
 	return *a == *b
+}
+
+func newRedisDataPoint(sec int64, val int64) *RedisDataPoint {
+	return &RedisDataPoint{
+		Timestamp: gtime.NewFromTimeStamp(sec),
+		Value:     val,
+		IsFilled:  false,
+	}
+}
+
+func getUnixMilli(sec int64) int64 {
+	return gtime.NewFromTimeStamp(sec).UnixMilli()
 }

@@ -43,3 +43,12 @@ func mustGetRealTimeWindowFromConfig(config Config) (string, time.Duration) {
 
 	return RealTimeWindowDefaultStr, RealTimeWindowDefaultDuration
 }
+
+func getValidFillOption(in string) string {
+	switch in {
+	case fillNone, fillNull, fillLinear:
+		return in
+	default:
+		return fillNone
+	}
+}

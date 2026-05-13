@@ -141,11 +141,13 @@ func (s *tdengine) Write(ctx context.Context, metrics []*Metric) (err error) {
 		return
 	}
 	res, err := s.client.Post(ctx, s.writeUri, buffer.Bytes())
-	defer res.Close() // res need to be closed to prevent oom
+	if res != nil {
+		defer res.Close() // res need to be closed to prevent oom
+	}
 	if err != nil {
 		return err
 	}
-	if res.StatusCode >= 400 {
+	if res != nil && res.StatusCode >= 400 {
 		g.Log().Error(ctx, res.ReadAllString())
 	}
 	return err
@@ -190,7 +192,7 @@ func (s *tdengine) ReadToMap(
 		for i, cv := range serializedData.ColumnMeta {
 			currentColumn := gconv.String(cv[0])
 			if currentColumn == tdengineColumnTimestamp {
-				// transform "2024-03-30T14:20:25.450Z" to unix time 1711808425450
+				// transform "2024-03-30T14:20:25.450Z" to Unix time 1711808425450
 				m[currentColumn] = gtime.New(dv[i]).UnixMilli()
 			} else if constColumns.Contains(currentColumn) {
 				// device/deviceId/project/projectId
@@ -227,15 +229,12 @@ func (s *tdengine) ReadToSeries(
 	ctx context.Context,
 	in ReadDeviceSeriesDataInput,
 ) (seriesData [][]any, timestamps []int64, err error) {
-	if in.FillOption == "" {
-		in.FillOption = fillNone
-	}
 	var deviceId string
 	if len(in.DeviceIds) > 1 {
-		return nil, nil, fmt.Errorf("data series for multiple devices will be supportted in the future")
-	} else {
-		deviceId = in.DeviceIds[0]
+		return nil, nil, fmt.Errorf("data series for multiple devices will be supported in the future")
 	}
+	deviceId = in.DeviceIds[0]
+
 	// select `p1`,`p2` from xxx where `device`=`xxx` and `_ts`>xxx and `_ts`<xxx interval(xxx) fill(xxx)
 	var queryString strings.Builder
 	queryString.WriteString(fmt.Sprintf(
@@ -252,7 +251,7 @@ func (s *tdengine) ReadToSeries(
 	queryString.WriteString(fmt.Sprintf("`%s`='%s' AND ", tdengineTableTagsDevice, deviceId))
 	queryString.WriteString(fmt.Sprintf("`%s`>=%d AND ", tdengineColumnTimestamp, in.StartTime))
 	queryString.WriteString(fmt.Sprintf("`%s`<=%d ", tdengineColumnTimestamp, in.EndTime))
-	queryString.WriteString(fmt.Sprintf("INTERVAL(%s) FILL(%s)", in.Interval, in.FillOption))
+	queryString.WriteString(fmt.Sprintf("INTERVAL(%s) FILL(%s)", in.Interval, getValidFillOption(in.FillOption)))
 
 	serializedData, err := s.post(ctx, queryString.String())
 	if err != nil {
@@ -273,7 +272,7 @@ func (s *tdengine) ReadToSeries(
 				series = append(series, emptyAnyArray)
 			}
 			if tsColumns.Contains(gconv.String(cv[0])) {
-				// transform "2024-03-30T14:20:25.450Z" to unix time 1711808425450
+				// transform "2024-03-30T14:20:25.450Z" to Unix time 1711808425450
 				series[i] = append(series[i], gtime.New(dv[i]).UnixMilli())
 			} else {
 				series[i] = append(series[i], dv[i])
@@ -309,7 +308,9 @@ func (s *tdengine) CreateSTable(ctx context.Context, stableName string, columns 
 
 func (s *tdengine) post(ctx context.Context, qs string) (*TdengineHttpOutput, error) {
 	tdHttpRes, err := s.client.Post(ctx, s.uri, qs)
-	defer tdHttpRes.Close() // res need to be closed to prevent oom
+	if tdHttpRes != nil {
+		defer tdHttpRes.Close() // res need to be closed to prevent oom
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +328,9 @@ func (s *tdengine) post(ctx context.Context, qs string) (*TdengineHttpOutput, er
 
 func (s *tdengine) operateDb(ctx context.Context, qs string) (out *TdengineHttpOutput, err error) {
 	tdHttpRes, err := s.client.Post(ctx, s.uriNoDb, qs)
-	defer tdHttpRes.Close() // res need to be closed to prevent oom
+	if tdHttpRes != nil {
+		defer tdHttpRes.Close() // res need to be closed to prevent oom
+	}
 	if err != nil {
 		return nil, err
 	}
