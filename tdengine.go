@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -156,29 +157,14 @@ func (s *tdengine) Write(ctx context.Context, metrics []*Metric) (err error) {
 func (s *tdengine) ReadToMap(
 	ctx context.Context,
 	in ReadDeviceLatestDataInput,
-	dataFilterMap map[string]float64,
 ) (pointCodeValueMaps []map[string]any, pointCodes [][]string, err error) {
-	var queryString strings.Builder
-	queryString.WriteString("SELECT ")
-	queryString.WriteString(WrapColumnsWithBackQuote(in.PointCodes, "last", true, true, in.HaveProjectIdInResult))
-	queryString.WriteString(fmt.Sprintf(" FROM `%s` WHERE ", in.DeviceModelName))
-	if in.ProjectId != "" {
-		queryString.WriteString(fmt.Sprintf("`%s`='%s' AND ", tdengineColumnProject, in.ProjectId))
-	}
-	if len(in.DeviceIds) > 0 {
-		queryString.WriteString(fmt.Sprintf("`%s` IN (%s) AND ", tdengineColumnDevice, WrapDevicesWithSingleQuote(in.DeviceIds)))
-	}
-	queryString.WriteString(fmt.Sprintf("`%s`>NOW-%s ", tdengineColumnTimestamp, s.realTimeWindow))
-	queryString.WriteString(fmt.Sprintf("PARTITION BY `%s`, `%s`", tdengineColumnDevice, tdengineColumnProject))
-
-	serializedData, err := s.post(ctx, queryString.String())
+	serializedData, err := s.post(ctx, buildTdengineLatestQuery(in, s.realTimeWindow))
 	if err != nil {
 		return nil, nil, err
 	}
 
 	pointCodeValueMaps = make([]map[string]any, 0)
 	pointCodes = make([][]string, 0)
-	// todo, filter data in memory because I cannot find a better SQL to do filter in tdengine
 	constColumns := garray.NewStrArrayFrom([]string{
 		tdengineColumnProject,
 		tdengineColumnAliasProject,
@@ -188,7 +174,6 @@ func (s *tdengine) ReadToMap(
 	for _, dv := range serializedData.Data {
 		m := make(map[string]any)
 		pointCodesInOneTimestamp := make([]string, 0)
-		isPassedFilter := true // whether equals the value given by the filter data map
 		for i, cv := range serializedData.ColumnMeta {
 			currentColumn := gconv.String(cv[0])
 			if currentColumn == tdengineColumnTimestamp {
@@ -199,17 +184,6 @@ func (s *tdengine) ReadToMap(
 				m[currentColumn] = dv[i]
 			} else {
 				// point code
-				// dataFilterMap must not be nil and key must be contained
-				// then compare value
-				// if one point value is not equaled to the given value in filter map, this device will be omitted
-				if dataFilterMap != nil {
-					if currentColumnValue, ok := dataFilterMap[currentColumn]; ok {
-						if gconv.Float64(dv[i]) != currentColumnValue {
-							isPassedFilter = false
-							break
-						}
-					}
-				}
 				m[currentColumn] = dv[i]
 				pointCodesInOneTimestamp = append(pointCodesInOneTimestamp, currentColumn)
 			}
@@ -217,12 +191,42 @@ func (s *tdengine) ReadToMap(
 		if in.HaveDeviceModelNameInResult == true {
 			m[tdengineTableNameKey] = in.DeviceModelName
 		}
-		if isPassedFilter {
-			pointCodeValueMaps = append(pointCodeValueMaps, m)
-			pointCodes = append(pointCodes, pointCodesInOneTimestamp)
-		}
+		pointCodeValueMaps = append(pointCodeValueMaps, m)
+		pointCodes = append(pointCodes, pointCodesInOneTimestamp)
 	}
 	return
+}
+
+func buildTdengineLatestQuery(in ReadDeviceLatestDataInput, realTimeWindow string) string {
+	var queryString strings.Builder
+	queryString.WriteString("SELECT ")
+	queryString.WriteString(WrapColumnsWithBackQuote(pointCodesFromRanges(in.Points), "last", true, true, in.HaveProjectIdInResult))
+	queryString.WriteString(fmt.Sprintf(" FROM `%s` WHERE ", in.DeviceModelName))
+	if in.ProjectId != "" {
+		queryString.WriteString(fmt.Sprintf("`%s`='%s' AND ", tdengineColumnProject, in.ProjectId))
+	}
+	if len(in.DeviceIds) > 0 {
+		queryString.WriteString(fmt.Sprintf("`%s` IN (%s) AND ", tdengineColumnDevice, WrapDevicesWithSingleQuote(in.DeviceIds)))
+	}
+	queryString.WriteString(fmt.Sprintf("`%s`>NOW-%s ", tdengineColumnTimestamp, realTimeWindow))
+	queryString.WriteString(fmt.Sprintf("PARTITION BY `%s`, `%s`", tdengineColumnDevice, tdengineColumnProject))
+
+	filters := make([]string, 0)
+	for _, point := range in.Points {
+		if point.MinValue != nil {
+			filters = append(filters, fmt.Sprintf("`%s`>=%s", point.PointCode, strconv.FormatFloat(*point.MinValue, 'f', -1, 64)))
+		}
+		if point.MaxValue != nil {
+			filters = append(filters, fmt.Sprintf("`%s`<=%s", point.PointCode, strconv.FormatFloat(*point.MaxValue, 'f', -1, 64)))
+		}
+		if point.EqualValue != nil {
+			filters = append(filters, fmt.Sprintf("`%s`=%s", point.PointCode, strconv.FormatFloat(*point.EqualValue, 'f', -1, 64)))
+		}
+	}
+	if len(filters) == 0 {
+		return queryString.String()
+	}
+	return fmt.Sprintf("SELECT * FROM (%s) AS latest WHERE %s", queryString.String(), strings.Join(filters, " AND "))
 }
 
 func (s *tdengine) ReadToSeries(

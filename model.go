@@ -15,13 +15,21 @@ type Config struct {
 }
 
 type ReadDeviceLatestDataInput struct {
-	DeviceModelName             string   `v:"required"`
-	PointCodes                  []string `v:"required"`
+	DeviceModelName             string           `v:"required"`
+	Points                      []PointWithRange `v:"required"`
 	ProjectId                   string
 	DeviceIds                   []string
 	HaveProjectIdInResult       bool
 	HaveDeviceModelNameInResult bool
 }
+
+type PointWithRange struct {
+	PointCode  string
+	MinValue   *float64
+	MaxValue   *float64
+	EqualValue *float64
+}
+
 type ReadDeviceSeriesDataInput struct {
 	DeviceIds       []string `v:"required"`
 	DeviceModelName string   `v:"required"`

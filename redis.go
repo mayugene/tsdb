@@ -115,7 +115,6 @@ func (s *redis) Write(ctx context.Context, metrics []*Metric) error {
 func (s *redis) ReadToMap(
 	ctx context.Context,
 	in ReadDeviceLatestDataInput,
-	dataFilterMap map[string]float64,
 ) (pointCodeValueMaps []map[string]any, pointCodes [][]string, err error) {
 	/*
 		caution: projectId will not be used here
@@ -142,23 +141,16 @@ func (s *redis) ReadToMap(
 		zSetMap := rawZSet.Map()
 		newMap := make(map[string]any)
 		pointCodesInOneTimestamp := make([]string, 0)
-		isPassedFilter := true // whether equals the value given by the filter data map
-		for _, pointCode := range in.PointCodes {
-			valueNow := zSetMap[pointCode]
-			// dataFilterMap must not be nil and key must be contained
-			// then compare value
-			// if one point value is not equaled to the given value in filter map, this device will be omitted
-			if dataFilterMap != nil {
-				if pointValue, ok := dataFilterMap[pointCode]; ok {
-					if gconv.Float64(valueNow) != pointValue {
-						isPassedFilter = false
-						break
-					}
-				}
+		isPassedFilter := true
+		for _, point := range in.Points {
+			valueNow := zSetMap[point.PointCode]
+			if !pointValueMatchesRange(valueNow, point) {
+				isPassedFilter = false
+				break
 			}
 			if valueNow != nil {
-				newMap[pointCode] = gconv.Int64(valueNow)
-				pointCodesInOneTimestamp = append(pointCodesInOneTimestamp, pointCode)
+				newMap[point.PointCode] = gconv.Int64(valueNow)
+				pointCodesInOneTimestamp = append(pointCodesInOneTimestamp, point.PointCode)
 			}
 		}
 		if isPassedFilter && !(len(newMap) == 0) {
@@ -171,12 +163,38 @@ func (s *redis) ReadToMap(
 	return
 }
 
+func pointValueMatchesRange(value any, point PointWithRange) bool {
+	hasFilter := point.MinValue != nil || point.MaxValue != nil || point.EqualValue != nil
+	if value == nil {
+		return !hasFilter
+	}
+	floatValue := gconv.Float64(value)
+	if point.MinValue != nil && floatValue < *point.MinValue {
+		return false
+	}
+	if point.MaxValue != nil && floatValue > *point.MaxValue {
+		return false
+	}
+	if point.EqualValue != nil && floatValue != *point.EqualValue {
+		return false
+	}
+	return true
+}
+
 func (s *redis) ReadToSeries(
 	ctx context.Context,
 	in ReadDeviceSeriesDataInput,
 ) (seriesData [][]any, timestamps []int64, err error) {
 	allDeviceData, totalPointsCount := s.batchQueryDeviceData(ctx, in.DeviceIds, in.PointCodes, in.StartTime, in.EndTime)
 	return ApplyTimeWindowAndFill(allDeviceData, totalPointsCount, in.DeviceModelName, in.StartTime, in.EndTime, in.Interval, getValidFillOption(in.FillOption))
+}
+
+func pointCodesFromRanges(points []PointWithRange) []string {
+	pointCodes := make([]string, 0, len(points))
+	for _, point := range points {
+		pointCodes = append(pointCodes, point.PointCode)
+	}
+	return pointCodes
 }
 
 func (s *redis) CreateSTable(ctx context.Context, stableName string, columns []TdengineColumn) error {
