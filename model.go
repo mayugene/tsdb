@@ -19,6 +19,7 @@ type ReadDeviceLatestDataInput struct {
 	Points                      []PointWithRange `v:"required"`
 	ProjectId                   string
 	DeviceIds                   []string
+	RealTimeWindow              string
 	HaveProjectIdInResult       bool
 	HaveDeviceModelNameInResult bool
 }

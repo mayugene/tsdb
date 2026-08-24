@@ -34,3 +34,16 @@ func TestBuildTdengineLatestQueryWithoutFiltersAvoidsSubquery(t *testing.T) {
 		t.Fatalf("query mismatch:\ngot:  %s\nwant: %s", got, want)
 	}
 }
+
+func TestBuildTdengineLatestQueryUsesRequestRealTimeWindow(t *testing.T) {
+	in := ReadDeviceLatestDataInput{
+		DeviceModelName: "sensor",
+		Points:          []PointWithRange{{PointCode: "temperature"}},
+		RealTimeWindow:  "5m",
+	}
+	want := "SELECT last(`_ts`) as `_ts`, `device` as `deviceId`, last(`temperature`) as `temperature` FROM `sensor` WHERE `_ts`>NOW-5m PARTITION BY `device`, `project`"
+
+	if got := buildTdengineLatestQuery(in, "1m"); got != want {
+		t.Fatalf("query mismatch:\ngot:  %s\nwant: %s", got, want)
+	}
+}

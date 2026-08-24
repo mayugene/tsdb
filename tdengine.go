@@ -198,6 +198,9 @@ func (s *tdengine) ReadToMap(
 }
 
 func buildTdengineLatestQuery(in ReadDeviceLatestDataInput, realTimeWindow string) string {
+	if in.RealTimeWindow != "" {
+		realTimeWindow = in.RealTimeWindow
+	}
 	var queryString strings.Builder
 	queryString.WriteString("SELECT ")
 	queryString.WriteString(WrapColumnsWithBackQuote(pointCodesFromRanges(in.Points), "last", true, true, in.HaveProjectIdInResult))
