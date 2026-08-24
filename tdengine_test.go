@@ -2,6 +2,38 @@ package tsdb
 
 import "testing"
 
+func TestResolveRealTimeWindow(t *testing.T) {
+	tests := []struct {
+		name      string
+		override  string
+		want      string
+		wantError bool
+	}{
+		{name: "global fallback", override: "", want: "1m"},
+		{name: "request override", override: "5m", want: "5m"},
+		{name: "too large", override: "100h", wantError: true},
+		{name: "SQL injection", override: "1m OR 1=1", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveRealTimeWindow("1m", tt.override)
+			if tt.wantError {
+				if err == nil {
+					t.Fatal("expected invalid realTimeWindow to be rejected")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("realTimeWindow = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildTdengineLatestQueryFiltersAggregatedValues(t *testing.T) {
 	status := 1.0
 	minTemperature := 10.0
@@ -42,8 +74,12 @@ func TestBuildTdengineLatestQueryUsesRequestRealTimeWindow(t *testing.T) {
 		RealTimeWindow:  "5m",
 	}
 	want := "SELECT last(`_ts`) as `_ts`, `device` as `deviceId`, last(`temperature`) as `temperature` FROM `sensor` WHERE `_ts`>NOW-5m PARTITION BY `device`, `project`"
+	realTimeWindow, err := resolveRealTimeWindow("1m", in.RealTimeWindow)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if got := buildTdengineLatestQuery(in, "1m"); got != want {
+	if got := buildTdengineLatestQuery(in, realTimeWindow); got != want {
 		t.Fatalf("query mismatch:\ngot:  %s\nwant: %s", got, want)
 	}
 }

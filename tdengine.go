@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,6 +30,8 @@ type tdengine struct {
 	realTimeWindow string
 	sync.Mutex
 }
+
+var realTimeWindowPattern = regexp.MustCompile(`^[1-9][0-9]?[smh]$`)
 
 func NewTdengineClient() Client {
 	return &tdengine{
@@ -158,7 +161,11 @@ func (s *tdengine) ReadToMap(
 	ctx context.Context,
 	in ReadDeviceLatestDataInput,
 ) (pointCodeValueMaps []map[string]any, pointCodes [][]string, err error) {
-	serializedData, err := s.post(ctx, buildTdengineLatestQuery(in, s.realTimeWindow))
+	realTimeWindow, err := resolveRealTimeWindow(s.realTimeWindow, in.RealTimeWindow)
+	if err != nil {
+		return nil, nil, err
+	}
+	serializedData, err := s.post(ctx, buildTdengineLatestQuery(in, realTimeWindow))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -197,10 +204,21 @@ func (s *tdengine) ReadToMap(
 	return
 }
 
-func buildTdengineLatestQuery(in ReadDeviceLatestDataInput, realTimeWindow string) string {
-	if in.RealTimeWindow != "" {
-		realTimeWindow = in.RealTimeWindow
+func resolveRealTimeWindow(defaultWindow, override string) (string, error) {
+	if override == "" {
+		return defaultWindow, nil
 	}
+	if !realTimeWindowPattern.MatchString(override) {
+		return "", fmt.Errorf("invalid real time window: %q", override)
+	}
+	duration, err := gtime.ParseDuration(override)
+	if err != nil || duration < RealTimeWindowMinDuration {
+		return "", fmt.Errorf("invalid real time window: %q", override)
+	}
+	return override, nil
+}
+
+func buildTdengineLatestQuery(in ReadDeviceLatestDataInput, realTimeWindow string) string {
 	var queryString strings.Builder
 	queryString.WriteString("SELECT ")
 	queryString.WriteString(WrapColumnsWithBackQuote(pointCodesFromRanges(in.Points), "last", true, true, in.HaveProjectIdInResult))
