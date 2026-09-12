@@ -2,6 +2,7 @@ package tsdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -74,6 +75,7 @@ func (s *redis) IsHealthy(ctx context.Context) bool {
 }
 
 func (s *redis) Write(ctx context.Context, metrics []*Metric) error {
+	var writeErrors []error
 	for _, metric := range metrics {
 		// tags and fields of a valid metric should not be empty
 		if metric.TagList == nil || len(metric.TagList) == 0 || metric.FieldList == nil || len(metric.FieldList) == 0 {
@@ -101,15 +103,19 @@ func (s *redis) Write(ctx context.Context, metrics []*Metric) error {
 			seriesDataKey := fmt.Sprintf("%s:%s", deviceId, field.Key)
 			err := s.xAdd(ctx, seriesDataKey, timestamp, field.Value)
 			if err != nil {
-				g.Log().Errorf(ctx, "%s: %v", "XADD error", err)
+				writeErrors = append(writeErrors, fmt.Errorf("redis XADD: %w", err))
 			}
 		}
 		// update latest data
-		_, _ = g.Redis().HSet(ctx, latestDataKey, devicePointDataMap.Map())
-		_, _ = g.Redis().Expire(ctx, latestDataKey, s.realTimeWindow)
+		if _, err := g.Redis().HSet(ctx, latestDataKey, devicePointDataMap.Map()); err != nil {
+			writeErrors = append(writeErrors, fmt.Errorf("redis HSET: %w", err))
+		}
+		if _, err := g.Redis().Expire(ctx, latestDataKey, s.realTimeWindow); err != nil {
+			writeErrors = append(writeErrors, fmt.Errorf("redis EXPIRE: %w", err))
+		}
 	}
 
-	return nil
+	return errors.Join(writeErrors...)
 }
 
 func (s *redis) ReadToMap(

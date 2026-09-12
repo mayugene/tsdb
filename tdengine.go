@@ -149,12 +149,15 @@ func (s *tdengine) Write(ctx context.Context, metrics []*Metric) (err error) {
 		defer res.Close() // res need to be closed to prevent oom
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("TDengine write request: %w", err)
 	}
-	if res != nil && res.StatusCode >= 400 {
-		g.Log().Error(ctx, res.ReadAllString())
+	if res == nil {
+		return errors.New("TDengine write request returned no response")
 	}
-	return err
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return fmt.Errorf("TDengine write failed with HTTP status %d", res.StatusCode)
+	}
+	return nil
 }
 
 func (s *tdengine) ReadToMap(
