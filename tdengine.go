@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/gogf/gf/v2/container/garray"
-	"github.com/gogf/gf/v2/encoding/gjson"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/gclient"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -342,16 +341,7 @@ func (s *tdengine) post(ctx context.Context, qs string) (*TdengineHttpOutput, er
 	if err != nil {
 		return nil, err
 	}
-	jsonData, err := gjson.DecodeToJson(tdHttpRes.ReadAllString())
-	if err != nil {
-		return nil, err
-	}
-	serializedData := &TdengineHttpOutput{}
-	err = jsonData.Scan(serializedData)
-	if err != nil {
-		return nil, err
-	}
-	return serializedData, err
+	return decodeTdengineResponse(tdHttpRes.ReadAllString())
 }
 
 func (s *tdengine) operateDb(ctx context.Context, qs string) (out *TdengineHttpOutput, err error) {
@@ -362,14 +352,5 @@ func (s *tdengine) operateDb(ctx context.Context, qs string) (out *TdengineHttpO
 	if err != nil {
 		return nil, err
 	}
-	resDecode, err := gjson.DecodeToJson(tdHttpRes.ReadAllString())
-	if err != nil {
-		return nil, err
-	}
-	out = &TdengineHttpOutput{}
-	err = resDecode.Scan(out)
-	if err != nil {
-		return nil, err
-	}
-	return
+	return decodeTdengineResponse(tdHttpRes.ReadAllString())
 }

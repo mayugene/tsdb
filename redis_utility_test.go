@@ -1,8 +1,10 @@
 package tsdb
 
 import (
+	"math"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/gogf/gf/v2/container/garray"
 	"github.com/gogf/gf/v2/os/gtime"
@@ -497,6 +499,83 @@ func TestApplyTimeWindowAndFill(t *testing.T) {
 				t.Errorf("series mismatch:\nwant: %v\ngot:  %v", tt.wantSeries, series)
 			}
 		})
+	}
+}
+
+func TestApplyTimeWindowAndFillLinearInt64Precision(t *testing.T) {
+	base := gtime.NewFromStr("2026-01-01T00:00:00Z").Unix()
+	tests := []struct {
+		name       string
+		prev, next int64
+		nextOffset int64
+		want       int64
+	}{
+		{name: "above float64 integer precision", prev: 1<<53 + 1, next: 1<<53 + 3, nextOffset: 180, want: 1<<53 + 2},
+		{name: "maximum int64 constant", prev: math.MaxInt64, next: math.MaxInt64, nextOffset: 180, want: math.MaxInt64},
+		{name: "near maximum int64", prev: math.MaxInt64, next: math.MaxInt64 - 2, nextOffset: 180, want: math.MaxInt64 - 1},
+		{name: "minimum int64 constant", prev: math.MinInt64, next: math.MinInt64, nextOffset: 180, want: math.MinInt64},
+		{name: "near minimum int64", prev: math.MinInt64, next: math.MinInt64 + 2, nextOffset: 180, want: math.MinInt64 + 1},
+		{name: "rising across int64 range", prev: math.MinInt64, next: math.MaxInt64, nextOffset: 180, want: -1},
+		{name: "falling across int64 range", prev: math.MaxInt64, next: math.MinInt64, nextOffset: 180, want: -1},
+		{name: "positive half away from zero", prev: 1, next: 2, nextOffset: 180, want: 2},
+		{name: "negative half away from zero", prev: -1, next: -2, nextOffset: 180, want: -2},
+		{name: "positive fraction rounds down", prev: 1, next: 2, nextOffset: 300, want: 1},
+		{name: "negative fraction rounds toward zero", prev: -1, next: -2, nextOffset: 300, want: -1},
+		{name: "positive fraction rounds up", prev: 1, next: 2, nextOffset: 120, want: 2},
+		{name: "falling interpolation", prev: 10, next: 0, nextOffset: 120, want: 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			points := []*RedisDataPoint{
+				newRedisDataPoint(base-60, tt.prev),
+				newRedisDataPoint(base+tt.nextOffset, tt.next),
+			}
+			assertLinearWindowValue(t, points, base, tt.want)
+		})
+	}
+
+	t.Run("timestamp differences exceed int64", func(t *testing.T) {
+		points := []*RedisDataPoint{
+			{Timestamp: gtime.NewFromTime(time.UnixMilli(math.MinInt64)), Value: 0},
+			{Timestamp: gtime.NewFromTime(time.UnixMilli(math.MaxInt64)), Value: 100},
+		}
+		assertLinearWindowValue(t, points, base, 50)
+	})
+
+	for _, tt := range []struct {
+		name   string
+		offset int64
+		value  int64
+	}{
+		{name: "original maximum int64", offset: 30, value: math.MaxInt64},
+		{name: "previous maximum int64", offset: -60, value: math.MaxInt64},
+		{name: "next minimum int64", offset: 120, value: math.MinInt64},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assertLinearWindowValue(t, []*RedisDataPoint{newRedisDataPoint(base+tt.offset, tt.value)}, base, tt.value)
+		})
+	}
+}
+
+func assertLinearWindowValue(t *testing.T, points []*RedisDataPoint, start, want int64) {
+	t.Helper()
+	data := map[string]map[string][]*RedisDataPoint{"device": {"point": points}}
+	series, timestamps, err := ApplyTimeWindowAndFill(data, 1, "sensor", start, start+60, "1m", fillLinear)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(timestamps) != 1 || timestamps[0] != getUnixMilli(start+60) {
+		t.Fatalf("timestamps = %v, want [%d]", timestamps, getUnixMilli(start+60))
+	}
+	if len(series) != 1 || len(series[0]) != 1 {
+		t.Fatalf("series = %v, want one value", series)
+	}
+	got, ok := series[0][0].(*int64)
+	if !ok || got == nil {
+		t.Fatalf("value = %v, want int64 %d", series[0][0], want)
+	}
+	if *got != want {
+		t.Errorf("value = %d, want %d", *got, want)
 	}
 }
 

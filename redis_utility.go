@@ -3,7 +3,7 @@ package tsdb
 import (
 	"context"
 	"fmt"
-	"math"
+	"math/big"
 	"strings"
 
 	"github.com/gogf/gf/v2/container/garray"
@@ -54,7 +54,7 @@ func ApplyTimeWindowAndFill(
 	totalPointsCount int,
 	deviceModelName string,
 	start int64, // Unix time, seconds
-	end int64,   // Unix time, seconds
+	end int64, // Unix time, seconds
 	interval string,
 	fillOption string,
 ) (seriesData [][]any, timestamps []int64, err error) {
@@ -157,9 +157,7 @@ func ApplyTimeWindowAndFill(
 							if nextMs == prevMs {
 								windowValue = &prevPoint.Value
 							} else {
-								ratio := float64(targetMs-prevMs) / float64(nextMs-prevMs)
-								interP := float64(prevPoint.Value) + ratio*float64(nextPoint.Value-prevPoint.Value)
-								windowValue = new(int64(math.Round(interP)))
+								windowValue = new(interpolateRedisInt64(prevPoint.Value, nextPoint.Value, prevMs, nextMs, targetMs))
 							}
 						} else if prevPoint != nil {
 							// only previous exists, use prev to fill
@@ -205,6 +203,27 @@ func ApplyTimeWindowAndFill(
 	}
 
 	return seriesData, gconv.Int64s(timestampsAny), nil
+}
+
+// interpolateRedisInt64 interpolates between chronological points, rounding ties away from zero.
+func interpolateRedisInt64(prevValue, nextValue, prevMs, nextMs, targetMs int64) int64 {
+	// Form the complete rational value before rounding. Neither value nor time
+	// differences necessarily fit in int64, even though their endpoints do.
+	duration := new(big.Int).Sub(big.NewInt(nextMs), big.NewInt(prevMs))
+	elapsed := new(big.Int).Sub(big.NewInt(targetMs), big.NewInt(prevMs))
+	delta := new(big.Int).Sub(big.NewInt(nextValue), big.NewInt(prevValue))
+	numerator := new(big.Int).Mul(big.NewInt(prevValue), duration)
+	numerator.Add(numerator, delta.Mul(delta, elapsed))
+
+	value, remainder := new(big.Int), new(big.Int)
+	value.QuoRem(numerator, duration, remainder)
+	// QuoRem truncates toward zero. Move one integer away from zero when
+	// the absolute fractional part is at least one half.
+	remainder.Abs(remainder).Lsh(remainder, 1)
+	if remainder.Cmp(duration) >= 0 {
+		value.Add(value, big.NewInt(int64(numerator.Sign())))
+	}
+	return value.Int64()
 }
 
 func findValueWithIndex(pointValues []*RedisDataPoint, startIdx int, start *gtime.Time, end *gtime.Time) (*int64, int) {
