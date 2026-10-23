@@ -2,7 +2,9 @@ module github.com/mayugene/tsdb
 
 go 1.26.0
 
-require github.com/gogf/gf/v2 v2.10.0
+toolchain go1.27.3
+
+require github.com/gogf/gf/v2 v2.10.3
 
 require (
 	github.com/BurntSushi/toml v1.5.0 // indirect
