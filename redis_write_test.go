@@ -15,20 +15,12 @@ func TestRedisWriteAggregatesXAddHSetAndExpireErrors(t *testing.T) {
 	xaddErr := errors.New("xadd failed")
 	hsetErr := errors.New("hset failed")
 	expireErr := errors.New("expire failed")
-	// GoFrame caches the default client, so keep this test serial and reuse its offline adapter.
-	gredis.RegisterAdapterFunc(func(*gredis.Config) gredis.Adapter { return &redisWriteTestClient{} })
-	gredis.SetConfig(&gredis.Config{})
-	client := g.Redis().GetAdapter().(*redisWriteTestClient)
+	client := newRedisWriteTestClient(t)
 	client.errors = map[string]error{
 		"XADD":   xaddErr,
 		"HSET":   hsetErr,
 		"EXPIRE": expireErr,
 	}
-	client.calls = make(map[string]int)
-	t.Cleanup(func() {
-		client.errors = nil
-		clear(client.calls)
-	})
 	writer := &redis{realTimeWindow: 60}
 
 	err := writer.Write(t.Context(), redisWriteTestMetrics())
@@ -53,6 +45,17 @@ func TestRedisWriteAggregatesXAddHSetAndExpireErrors(t *testing.T) {
 	}
 }
 
+func newRedisWriteTestClient(t *testing.T) *redisWriteTestClient {
+	t.Helper()
+	// GoFrame caches the default client, so keep these tests serial and reuse its offline adapter.
+	gredis.RegisterAdapterFunc(func(*gredis.Config) gredis.Adapter { return &redisWriteTestClient{} })
+	gredis.SetConfig(&gredis.Config{})
+	client := g.Redis().GetAdapter().(*redisWriteTestClient)
+	*client = redisWriteTestClient{calls: make(map[string]int)}
+	t.Cleanup(func() { *client = redisWriteTestClient{} })
+	return client
+}
+
 func redisWriteTestMetrics() []*Metric {
 	return []*Metric{{
 		Name: "energy",
@@ -72,24 +75,36 @@ type redisWriteTestClient struct {
 	gredis.AdapterOperation
 	gredis.IGroupGeneric
 	gredis.IGroupHash
-	errors map[string]error
-	calls  map[string]int
+	errors      map[string]error
+	calls       map[string]int
+	client      gredis.RedisRawClient
+	commands    [][]any
+	batches     []int
+	execError   error
+	directError error
 }
 
-func (c *redisWriteTestClient) Do(_ context.Context, command string, _ ...any) (*gvar.Var, error) {
-	return nil, c.record(command)
+func (c *redisWriteTestClient) Client() gredis.RedisRawClient { return c.client }
+
+func (c *redisWriteTestClient) Do(_ context.Context, command string, args ...any) (*gvar.Var, error) {
+	err := c.record(command, args...)
+	if c.directError != nil {
+		err = c.directError
+	}
+	return nil, err
 }
 
-func (c *redisWriteTestClient) HSet(context.Context, string, map[string]any) (int64, error) {
-	return 1, c.record("HSET")
+func (c *redisWriteTestClient) HSet(_ context.Context, key string, fields map[string]any) (int64, error) {
+	return 1, c.record("HSET", key, fields)
 }
 
-func (c *redisWriteTestClient) Expire(_ context.Context, _ string, _ int64, _ ...gredis.ExpireOption) (int64, error) {
-	return 1, c.record("EXPIRE")
+func (c *redisWriteTestClient) Expire(_ context.Context, key string, seconds int64, _ ...gredis.ExpireOption) (int64, error) {
+	return 1, c.record("EXPIRE", key, seconds)
 }
 
-func (c *redisWriteTestClient) record(operation string) error {
+func (c *redisWriteTestClient) record(operation string, args ...any) error {
 	c.calls[operation]++
+	c.commands = append(c.commands, append([]any{operation}, args...))
 	return c.errors[operation]
 }
 

@@ -4,15 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gogf/gf/v2/container/gmap"
 	"github.com/gogf/gf/v2/database/gredis"
+	"github.com/gogf/gf/v2/encoding/gjson"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gcron"
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/gogf/gf/v2/util/gconv"
+	"github.com/gogf/gf/v2/util/gutil"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 /*
@@ -75,7 +80,72 @@ func (s *redis) IsHealthy(ctx context.Context) bool {
 }
 
 func (s *redis) Write(ctx context.Context, metrics []*Metric) error {
-	var writeErrors []error
+	const pipelineBatchSize = 128
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var (
+		writeErrors []error
+		redisClient *gredis.Redis
+		pipeline    goredis.Pipeliner
+	)
+	flush := func() {
+		if pipeline == nil || pipeline.Len() == 0 {
+			return
+		}
+		commands, execErr := pipeline.Exec(ctx)
+		execErrorReported := false
+		for _, command := range commands {
+			if err := command.Err(); err != nil {
+				writeErrors = append(writeErrors, fmt.Errorf("redis %s: %w", strings.ToUpper(command.Name()), err))
+				if errors.Is(err, execErr) {
+					execErrorReported = true
+				}
+			}
+		}
+		if execErr != nil && !execErrorReported {
+			writeErrors = append(writeErrors, fmt.Errorf("redis pipeline: %w", execErr))
+		}
+	}
+	queue := func(command string, args ...any) {
+		pipelineSafe := true
+		// Match GoFrame's Conn.Do encoding before bypassing it for the native pipeline.
+		for i, value := range args {
+			switch gutil.OriginTypeAndKind(value).OriginKind {
+			case reflect.Struct, reflect.Map, reflect.Slice, reflect.Array:
+				if _, ok := value.([]byte); !ok {
+					encoded, err := gjson.Marshal(value)
+					if err != nil {
+						// Collect earlier replies first to retain command error ordering.
+						flush()
+						writeErrors = append(writeErrors, fmt.Errorf("redis %s: %w", command, err))
+						return
+					}
+					args[i] = encoded
+				}
+			}
+			switch args[i].(type) {
+			case nil, string, *string, []byte, bool, *bool,
+				int, *int, int8, *int8, int16, *int16, int32, *int32, int64, *int64,
+				uint, *uint, uint8, *uint8, uint16, *uint16, uint32, *uint32, uint64, *uint64,
+				float32, *float32, float64, *float64, time.Duration, *time.Duration:
+			default:
+				pipelineSafe = false
+			}
+		}
+		if !pipelineSafe {
+			// A custom encoder or unsupported type must not abort unrelated commands in a batch.
+			flush()
+			if _, err := redisClient.Do(ctx, command, args...); err != nil {
+				writeErrors = append(writeErrors, fmt.Errorf("redis %s: %w", command, err))
+			}
+			return
+		}
+		pipeline.Do(ctx, append([]any{command}, args...)...)
+		if pipeline.Len() >= pipelineBatchSize {
+			flush()
+		}
+	}
 	for _, metric := range metrics {
 		// tags and fields of a valid metric should not be empty
 		if metric.TagList == nil || len(metric.TagList) == 0 || metric.FieldList == nil || len(metric.FieldList) == 0 {
@@ -92,6 +162,13 @@ func (s *redis) Write(ctx context.Context, metrics []*Metric) error {
 			// deviceId is a must
 			continue
 		}
+		if redisClient == nil {
+			redisClient = g.Redis()
+			// Cluster pipelines can reorder cross-shard commands, so retain their synchronous path.
+			if client, ok := redisClient.Client().(*goredis.Client); ok {
+				pipeline = client.Pipeline()
+			}
+		}
 		latestDataKey := fmt.Sprintf("%s:%s_%s", metric.Name, deviceId, redisKeyLatest)
 		// millisecond
 		timestamp := metric.Time.UnixMilli()
@@ -101,19 +178,33 @@ func (s *redis) Write(ctx context.Context, metrics []*Metric) error {
 		for _, field := range metric.FieldList {
 			devicePointDataMap.Set(field.Key, field.Value)
 			seriesDataKey := fmt.Sprintf("%s:%s", deviceId, field.Key)
+			if pipeline != nil {
+				queue("XADD", seriesDataKey, fmt.Sprintf("%d-*", timestamp), "value", field.Value)
+				continue
+			}
 			err := s.xAdd(ctx, seriesDataKey, timestamp, field.Value)
 			if err != nil {
 				writeErrors = append(writeErrors, fmt.Errorf("redis XADD: %w", err))
 			}
 		}
 		// update latest data
-		if _, err := g.Redis().HSet(ctx, latestDataKey, devicePointDataMap.Map()); err != nil {
+		if pipeline != nil {
+			args := []any{latestDataKey}
+			for key, value := range devicePointDataMap.Map() {
+				args = append(args, key, value)
+			}
+			queue("HSET", args...)
+			queue("EXPIRE", latestDataKey, s.realTimeWindow)
+			continue
+		}
+		if _, err := redisClient.HSet(ctx, latestDataKey, devicePointDataMap.Map()); err != nil {
 			writeErrors = append(writeErrors, fmt.Errorf("redis HSET: %w", err))
 		}
-		if _, err := g.Redis().Expire(ctx, latestDataKey, s.realTimeWindow); err != nil {
+		if _, err := redisClient.Expire(ctx, latestDataKey, s.realTimeWindow); err != nil {
 			writeErrors = append(writeErrors, fmt.Errorf("redis EXPIRE: %w", err))
 		}
 	}
+	flush()
 
 	return errors.Join(writeErrors...)
 }
