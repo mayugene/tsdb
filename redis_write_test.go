@@ -76,6 +76,7 @@ type redisWriteTestClient struct {
 	gredis.IGroupGeneric
 	gredis.IGroupHash
 	errors      map[string]error
+	hashes      map[string]map[string]string
 	calls       map[string]int
 	client      gredis.RedisRawClient
 	commands    [][]any
@@ -96,6 +97,10 @@ func (c *redisWriteTestClient) Do(_ context.Context, command string, args ...any
 
 func (c *redisWriteTestClient) HSet(_ context.Context, key string, fields map[string]any) (int64, error) {
 	return 1, c.record("HSET", key, fields)
+}
+
+func (c *redisWriteTestClient) HGetAll(_ context.Context, key string) (*gvar.Var, error) {
+	return gvar.New(c.hashes[key]), nil
 }
 
 func (c *redisWriteTestClient) Expire(_ context.Context, key string, seconds int64, _ ...gredis.ExpireOption) (int64, error) {

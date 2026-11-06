@@ -17,6 +17,9 @@ type Client interface {
 	Init(context.Context, Config) error
 	IsHealthy(context.Context) bool
 	Write(context.Context, []*Metric) error
+	// ReadToMap returns latest point values and their codes by device.
+	// Each row carries the stored sample time in "_ts" as int64 Unix milliseconds.
+	// pointCodes lists measurement codes only. Redis omits "_ts" for missing or invalid timestamps.
 	ReadToMap(
 		ctx context.Context,
 		in ReadDeviceLatestDataInput,

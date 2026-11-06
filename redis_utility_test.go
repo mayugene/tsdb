@@ -3,6 +3,7 @@ package tsdb
 import (
 	"math"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -495,8 +496,19 @@ func TestApplyTimeWindowAndFill(t *testing.T) {
 				t.Errorf("timestamps mismatch:\nwant: %v\ngot:  %v", tt.wantTimestamps, timestamps)
 			}
 
-			if !reflect.DeepEqual(tt.wantSeries, series) {
-				t.Errorf("series mismatch:\nwant: %v\ngot:  %v", tt.wantSeries, series)
+			if len(series) != len(tt.wantSeries) {
+				t.Fatalf("series count = %d, want %d", len(series), len(tt.wantSeries))
+			}
+			// Series come from map iteration. Match each complete series once.
+			remaining := slices.Clone(series)
+			for _, want := range tt.wantSeries {
+				match := slices.IndexFunc(remaining, func(got []any) bool {
+					return reflect.DeepEqual(got, want)
+				})
+				if match < 0 {
+					t.Fatalf("series mismatch:\nwant: %v\ngot:  %v", tt.wantSeries, series)
+				}
+				remaining = slices.Delete(remaining, match, match+1)
 			}
 		})
 	}

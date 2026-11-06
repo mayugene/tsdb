@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -245,12 +246,15 @@ func (s *redis) ReadToMap(
 				isPassedFilter = false
 				break
 			}
-			if valueNow != nil {
+			if valueNow != nil && point.PointCode != redisKeyTimestamp {
 				newMap[point.PointCode] = gconv.Int64(valueNow)
 				pointCodesInOneTimestamp = append(pointCodesInOneTimestamp, point.PointCode)
 			}
 		}
-		if isPassedFilter && !(len(newMap) == 0) {
+		if isPassedFilter && len(newMap) > 0 {
+			if timestamp, parseErr := strconv.ParseInt(gconv.String(zSetMap[redisKeyTimestamp]), 10, 64); parseErr == nil {
+				newMap[redisKeyTimestamp] = timestamp
+			}
 			newMap[tdengineColumnAliasDevice] = deviceId
 			pointCodeValueMaps = append(pointCodeValueMaps, newMap)
 			pointCodes = append(pointCodes, pointCodesInOneTimestamp)

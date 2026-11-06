@@ -45,12 +45,18 @@ func TestTdengineReadPreservesBigInt(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			body := fmt.Sprintf(`{"code":0,"column_meta":[["_ts","TIMESTAMP",8],["value",%q,8]],"data":[["2024-03-30T14:20:25.450Z",%s]],"rows":1}`, tt.columnType, tt.value)
 			client := newTdengineReadTestClient(body)
-			maps, _, err := client.ReadToMap(t.Context(), ReadDeviceLatestDataInput{DeviceModelName: "sensor", Points: []PointWithRange{{PointCode: "value"}}})
+			maps, pointCodes, err := client.ReadToMap(t.Context(), ReadDeviceLatestDataInput{DeviceModelName: "sensor", Points: []PointWithRange{{PointCode: "value"}}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if got := maps[0]["value"]; !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ReadToMap = %T(%v), want %T(%v)", got, got, tt.want, tt.want)
+			}
+			if got := maps[0]["_ts"]; got != int64(1711808425450) {
+				t.Errorf("ReadToMap timestamp = %T(%v), want int64(1711808425450)", got, got)
+			}
+			if !reflect.DeepEqual(pointCodes, [][]string{{"value"}}) {
+				t.Errorf("ReadToMap point codes = %v, want [[value]]", pointCodes)
 			}
 			series, timestamps, err := client.ReadToSeries(t.Context(), ReadDeviceSeriesDataInput{DeviceModelName: "sensor", DeviceIds: []string{"d1"}, PointCodes: []string{"value"}, Interval: "1s"})
 			if err != nil {
