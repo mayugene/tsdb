@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gogf/gf/v2/container/gmap"
 	"github.com/gogf/gf/v2/database/gredis"
 	"github.com/gogf/gf/v2/encoding/gjson"
 	"github.com/gogf/gf/v2/frame/g"
@@ -174,10 +173,13 @@ func (s *redis) Write(ctx context.Context, metrics []*Metric) error {
 		// millisecond
 		timestamp := metric.Time.UnixMilli()
 
-		devicePointDataMap := gmap.NewStrAnyMap()
-		devicePointDataMap.Set(redisKeyTimestamp, timestamp)
+		latest := make(map[string]any, 1+2*len(metric.FieldList))
+		latest[redisKeyTimestamp] = timestamp
 		for _, field := range metric.FieldList {
-			devicePointDataMap.Set(field.Key, field.Value)
+			if !isRedisLatestMetadata(field.Key) {
+				latest[field.Key] = field.Value
+				latest[redisPointTimestampPrefix+field.Key] = timestamp
+			}
 			seriesDataKey := fmt.Sprintf("%s:%s", deviceId, field.Key)
 			if pipeline != nil {
 				queue("XADD", seriesDataKey, fmt.Sprintf("%d-*", timestamp), "value", field.Value)
@@ -188,17 +190,18 @@ func (s *redis) Write(ctx context.Context, metrics []*Metric) error {
 				writeErrors = append(writeErrors, fmt.Errorf("redis XADD: %w", err))
 			}
 		}
-		// update latest data
+		// One HSET keeps each value and its timestamp atomic and leaves untouched points alone.
 		if pipeline != nil {
-			args := []any{latestDataKey}
-			for key, value := range devicePointDataMap.Map() {
+			args := make([]any, 1, 1+2*len(latest))
+			args[0] = latestDataKey
+			for key, value := range latest {
 				args = append(args, key, value)
 			}
 			queue("HSET", args...)
 			queue("EXPIRE", latestDataKey, s.realTimeWindow)
 			continue
 		}
-		if _, err := redisClient.HSet(ctx, latestDataKey, devicePointDataMap.Map()); err != nil {
+		if _, err := redisClient.HSet(ctx, latestDataKey, latest); err != nil {
 			writeErrors = append(writeErrors, fmt.Errorf("redis HSET: %w", err))
 		}
 		if _, err := redisClient.Expire(ctx, latestDataKey, s.realTimeWindow); err != nil {
@@ -208,6 +211,10 @@ func (s *redis) Write(ctx context.Context, metrics []*Metric) error {
 	flush()
 
 	return errors.Join(writeErrors...)
+}
+
+func isRedisLatestMetadata(field string) bool {
+	return field == redisKeyTimestamp || field == redisKeyPointTimestamps || strings.HasPrefix(field, redisPointTimestampPrefix)
 }
 
 func (s *redis) ReadToMap(
@@ -229,31 +236,43 @@ func (s *redis) ReadToMap(
 	}
 	for _, deviceId := range targetDeviceIds {
 		latestDataKey := fmt.Sprintf("%s:%s_%s", in.DeviceModelName, deviceId, redisKeyLatest)
-		rawZSet, loopErr := g.Redis().HGetAll(ctx, latestDataKey)
+		rawHash, loopErr := g.Redis().HGetAll(ctx, latestDataKey)
 		if loopErr != nil {
 			return nil, nil, loopErr
 		}
-		if rawZSet == nil {
+		if rawHash == nil {
 			continue
 		}
-		zSetMap := rawZSet.Map()
+		hash := rawHash.Map()
 		newMap := make(map[string]any)
+		var pointTimestamps map[string]int64
 		pointCodesInOneTimestamp := make([]string, 0)
 		isPassedFilter := true
 		for _, point := range in.Points {
-			valueNow := zSetMap[point.PointCode]
+			code := point.PointCode
+			valueNow := hash[code]
 			if !pointValueMatchesRange(valueNow, point) {
 				isPassedFilter = false
 				break
 			}
-			if valueNow != nil && point.PointCode != redisKeyTimestamp {
-				newMap[point.PointCode] = gconv.Int64(valueNow)
-				pointCodesInOneTimestamp = append(pointCodesInOneTimestamp, point.PointCode)
+			if valueNow == nil || isRedisLatestMetadata(code) {
+				continue
+			}
+			newMap[code] = gconv.Int64(valueNow)
+			pointCodesInOneTimestamp = append(pointCodesInOneTimestamp, code)
+			if timestamp, parseErr := strconv.ParseInt(gconv.String(hash[redisPointTimestampPrefix+code]), 10, 64); parseErr == nil {
+				if pointTimestamps == nil {
+					pointTimestamps = make(map[string]int64)
+				}
+				pointTimestamps[code] = timestamp
 			}
 		}
 		if isPassedFilter && len(newMap) > 0 {
-			if timestamp, parseErr := strconv.ParseInt(gconv.String(zSetMap[redisKeyTimestamp]), 10, 64); parseErr == nil {
+			if timestamp, parseErr := strconv.ParseInt(gconv.String(hash[redisKeyTimestamp]), 10, 64); parseErr == nil {
 				newMap[redisKeyTimestamp] = timestamp
+			}
+			if len(pointTimestamps) > 0 {
+				newMap[redisKeyPointTimestamps] = pointTimestamps
 			}
 			newMap[tdengineColumnAliasDevice] = deviceId
 			pointCodeValueMaps = append(pointCodeValueMaps, newMap)

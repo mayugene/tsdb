@@ -3,6 +3,7 @@ package tsdb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/gogf/gf/v2/container/gvar"
@@ -96,7 +97,19 @@ func (c *redisWriteTestClient) Do(_ context.Context, command string, args ...any
 }
 
 func (c *redisWriteTestClient) HSet(_ context.Context, key string, fields map[string]any) (int64, error) {
-	return 1, c.record("HSET", key, fields)
+	if err := c.record("HSET", key, fields); err != nil {
+		return 0, err
+	}
+	if c.hashes == nil {
+		c.hashes = make(map[string]map[string]string)
+	}
+	if c.hashes[key] == nil {
+		c.hashes[key] = make(map[string]string)
+	}
+	for field, value := range fields {
+		c.hashes[key][field] = fmt.Sprint(value)
+	}
+	return 1, nil
 }
 
 func (c *redisWriteTestClient) HGetAll(_ context.Context, key string) (*gvar.Var, error) {

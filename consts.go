@@ -42,6 +42,8 @@ const (
 const (
 	redisKeyLatest               = "latest"
 	redisKeyTimestamp            = "_ts"
+	redisKeyPointTimestamps      = "_pointTs"
+	redisPointTimestampPrefix    = redisKeyPointTimestamps + ":"
 	redisAutoExpireCronName      = "RedisAutoExpireCron"
 	redisDataKeepDefaultStr      = "1h"
 	redisDataKeepDefaultDuration = time.Hour

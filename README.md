@@ -24,3 +24,11 @@ GoFrame value encoding, and latest-value TTLs. Cluster and other adapters retain
 synchronous writes to preserve command ordering. Values requiring custom native
 encoding are sent individually so encoding failures cannot abort unrelated
 commands in a pipeline.
+
+For Redis, each latest-value hash update stores the values and their sample
+times together. A partial write advances only the written points' times.
+`ReadToMap` retains the device-level `_ts` and adds `_pointTs` (a
+`map[string]int64` of Unix milliseconds) for returned points with valid stored
+times. Legacy or malformed timestamps are omitted without dropping the point
+value. Use `_pointTs` to judge point freshness. `_ts`, `_pointTs`, and
+`_pointTs:`-prefixed fields are reserved for latest-value metadata.

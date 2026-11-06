@@ -33,10 +33,15 @@ func TestRedisWritePipelinesCommandsAndPreservesData(t *testing.T) {
 		{"XADD", "device-1:p1", "1700000000123-*", "value", 1},
 		{"XADD", "device-1:p2", "1700000000123-*", "value", int64(9223372036854775807)},
 		{"XADD", "device-1:p1", "1700000000123-*", "value", 3},
-		{"HSET", "energy:device-1_latest", map[string]any{"_ts": int64(1700000000123), "p1": 3, "p2": int64(9223372036854775807)}},
+		{"HSET", "energy:device-1_latest", map[string]any{
+			"_ts": int64(1700000000123), "p1": 3, "p2": int64(9223372036854775807),
+			"_pointTs:p1": int64(1700000000123), "_pointTs:p2": int64(1700000000123),
+		}},
 		{"EXPIRE", "energy:device-1_latest", int64(60)},
 		{"XADD", "device-1:p2", "1700000000123-*", "value", 4},
-		{"HSET", "energy:device-1_latest", map[string]any{"_ts": int64(1700000000123), "p2": 4}},
+		{"HSET", "energy:device-1_latest", map[string]any{
+			"_ts": int64(1700000000123), "p2": 4, "_pointTs:p2": int64(1700000000123),
+		}},
 		{"EXPIRE", "energy:device-1_latest", int64(60)},
 	}
 	for i, command := range client.commands {
